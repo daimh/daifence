@@ -5,7 +5,7 @@ an Intrusion Detection System that bans malicious IP addresses found from SYC pa
 $ git clone https://github.com/daimh/daifence.git
 
 ###### initilize, assume the public network device is eno1
-$ ./daifence --init eno1 
+$ ./daifence --ipv 4 --init eno1 
 
 ###### check the SYC packets in the past 60 seconds.
 $ ./daifence --ipv 4 -w 60 -m 1000 -f whitelist.txt --rule-file rules.py
@@ -17,6 +17,6 @@ $ ./daifence --ipv 4 -w 60 -m 1000 -f whitelist.txt --rule-file rules.py --ssh-i
 $ ./daifence -h
 
 ###### crontab example
-@reboot root /root/daifence/daifence  --init eno1
+@reboot root /root/daifence/daifence --ipv 4 --init eno1
 
 \* * * * * root /root/daifence/daifence --ipv 4 -w 60 -m 1000 -f whitelist.txt --rule-file rules.py --ssh-invalid-users-file ssh-invalid-users.txt --ssh localhost:3
