@@ -18,4 +18,5 @@ $ ./daifence -h
 
 ###### crontab example
 @reboot root /root/daifence/daifence  --init eno1
-* * * * * root /root/daifence/daifence --ipv 4 -w 60 -m 1000 -f whitelist.txt --rule-file rules.py --ssh-invalid-users-file ssh-invalid-users.txt --ssh localhost:3
+
+\* * * * * root /root/daifence/daifence --ipv 4 -w 60 -m 1000 -f whitelist.txt --rule-file rules.py --ssh-invalid-users-file ssh-invalid-users.txt --ssh localhost:3
