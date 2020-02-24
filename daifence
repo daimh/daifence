@@ -263,8 +263,8 @@ def unban(args, banned_lst, unban_num):
 	else:
 		syslog.syslog('unban %d IPs: %s' % (unban_num, ', '.join(banned_lst[-unban_num:])))
 		for ip in banned_lst[-unban_num:]:
-			cmd = 'iptables' if '.' in ip else 'ip6tables'
-			subprocess.check_call([cmd, '-D', 'daifence', '-s', ip, '-j', 'DROP'])
+			setname = 'daifence4' if '.' in ip else 'daifence6'
+			subprocess.check_call(['ipset', 'del', setname, ip])
 
 def clear_then_init_4or6(args, cmds, v4to6):
 	if args.dry_run:
