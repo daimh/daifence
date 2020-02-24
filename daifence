@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#20200225 ipset
 #20200224 MAJOR merge features from different versions
 #20190808 ssh_invalid_users
 #20190521 MAJOR, --init, -v 4/6, v6 is not throughtly tested yet
@@ -33,6 +34,7 @@ def get_args():
 	parser.add_argument("--ssh-invalid-users-file", help="a list of invalid ssh user names that will trigger an immediate ban")
 	parser.add_argument("--smb", nargs='+', help="<host name>:<maximum occurences of 'NT_STATUS_WRONG_PASSWORD'>")
 	parser.add_argument("--init", help="initialize the network interface", metavar="INTERFACE")
+	parser.add_argument("--clear", help="clear daifence on the network interface", metavar="INTERFACE")
 	parser.add_argument("--ipv", help="4/6/46, work on IPv4/IPv6 or both, default is both", default='46')
 	return parser.parse_args()
 def readlines_reverse(filename):
@@ -69,16 +71,14 @@ def readlines_journal():
 				line.append(next_char)
 			position -= 1
 		yield ''.join(line[::-1])
+def get_banned_lst_setname(banned_lst, setname):
+	for ln in subprocess.check_output(['ipset', 'list', setname]).decode('utf-8').split('\n'):
+		if ': ' not in ln and 'Members:' not in ln and ln != '':
+			banned_lst.append(ln)
 def get_banned_lst(args):
 	banned_lst = []
-	if '4' in args.ipv:
-		for ln in subprocess.run(['iptables', '-nL', 'daifence'], stdout=subprocess.PIPE).stdout.decode('utf-8').split('\n'):
-			if ln.startswith('DROP       all  --'):
-				banned_lst.append(ln.split()[3])
-	if '6' in args.ipv:
-		for ln in subprocess.run(['ip6tables', '-nL', 'daifence'], stdout=subprocess.PIPE).stdout.decode('utf-8').split('\n'):
-			if ln.startswith('DROP       all  --'):
-				banned_lst.append(ln.split()[3])
+	if '4' in args.ipv: get_banned_lst_setname(banned_lst, 'daifence4')
+	if '6' in args.ipv: get_banned_lst_setname(banned_lst, 'daifence6')
 	return banned_lst
 def ip2int(sip):
 	if '.' in sip:
@@ -124,6 +124,7 @@ def str2net(ln):
 def get_networks(filename):
 	if filename is None: raise Exception('ERR-005')
 	networks = [str2net(ln) for ln in open(filename)]
+	networks = [net for net in networks if net is not None]
 	return list(set(networks))
 def in_networks(sip, networks):
 	if networks is None: raise Exception('ERR-006')
@@ -157,10 +158,9 @@ def ban_it(banned, args, printlist, ip, reason):
 	elif args.ipv == '6':
 		if ip2int(ip)[0] != socket.AF_INET6: return
 	if printlist is None or in_networks(ip, printlist): print(ip, reason, sep='\t')
-	cmd = 'iptables' if '.' in ip else 'ip6tables'
+	setname = 'daifence4' if '.' in ip else 'daifence6'
 	if not args.dry_run:
-		subprocess.check_call([cmd, '-I', 'daifence', '-s', ip, '-j', 'DROP'])
-#		subprocess.check_call(['logger', 'daifence-log', ip, reason])
+		subprocess.check_call(['ipset', 'add', setname, ip])
 		syslog.syslog('ban: %s, %s' % (ip, reason))
 		banned.add(ip)
 
@@ -266,39 +266,42 @@ def unban(args, banned_lst, unban_num):
 			cmd = 'iptables' if '.' in ip else 'ip6tables'
 			subprocess.check_call([cmd, '-D', 'daifence', '-s', ip, '-j', 'DROP'])
 
-def init_cmd(args, params, cmd):
-	rev = {
-		'-I':'-D',
-		'-N':'-X',
-	}
+def clear_then_init_4or6(args, cmds, v4to6):
 	if args.dry_run:
-		print('##', cmd)
-	for param in reversed(params):
-		param = [rev.get(s, s) for s in param]
-		if args.dry_run:
-			print(' '.join([cmd] + param))
+		print('#')
+	for cmd in reversed(cmds):
+		if cmd[0] == 'iptables':
+			cmd = [{'-I':'-D'}.get(s, s) for s in cmd]
 		else:
-			subprocess.run([cmd] + [rev.get(s, s) for s in param], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-	for param in params:
+			cmd = ['ipset', 'destroy', 'daifence4']
+		cmd = [v4to6.get(s, s) for s in cmd]
 		if args.dry_run:
-			print(' '.join([cmd] + param))
-		elif subprocess.run([cmd] + param).returncode != 0:
-			raise Exception('ERR-300: COMMAND failed, ' + ' '.join(param) )
-def init(args):
-	params = [
-		['-t', 'nat', '-I', 'PREROUTING', '-i', args.init, '-p', 'tcp', '-m', 'tcp', '--tcp-flags', 'FIN,SYN,RST,ACK', 'SYN', '-j', 'LOG', '--log-prefix', 'daifence:'],
-		['-N', 'daifence'],
-		['-F', 'daifence'],
-		['-i', args.init, '-I', 'INPUT', '-j', 'daifence'],
-		['-i', args.init, '-I', 'FORWARD', '-j', 'daifence'],
+			print(' '.join(cmd))
+		else:
+			subprocess.call(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	if args.init is None: return
+	for cmd in cmds:
+		cmd = [v4to6.get(s, s) for s in cmd]
+		if args.dry_run:
+			print(' '.join(cmd))
+		elif subprocess.call(cmd) != 0:
+			raise Exception('ERR-300: COMMAND failed:\n\t' + ' '.join(cmd) )
+def clear_then_init(args):
+	cmds = [
+		['iptables', '-t', 'nat', '-I', 'PREROUTING', '-i', args.clear, '-p', 'tcp', '-m', 'tcp', '--tcp-flags', 'FIN,SYN,RST,ACK', 'SYN', '-j', 'LOG', '--log-prefix', 'daifence:'],
+		['ipset', 'create', 'daifence4', 'hash:ip', 'family', 'inet'],
+		['iptables', '-i', args.clear, '-I', 'INPUT', '-m', 'set', '--match-set', 'daifence4', 'src', '-j', 'DROP'],
+		['iptables', '-i', args.clear, '-I', 'FORWARD', '-m', 'set', '--match-set', 'daifence4', 'src', '-j', 'DROP'],
 	]
-	if '4' in args.ipv: init_cmd(args, params, 'iptables')
-	if '6' in args.ipv: init_cmd(args, params, 'ip6tables')
+	if '4' in args.ipv: clear_then_init_4or6(args, cmds, {})
+	if '6' in args.ipv: clear_then_init_4or6(args, cmds, {'iptables':'ip6tables', 'daifence4':'daifence6', 'inet':'inet6'})
 def main():
 	args = get_args()
 	if args.ipv not in ['4', '6', '46']: raise Exception('ERR-001')
 	if args.init is not None:
-		init(args)
+		args.clear = args.init
+	if args.clear is not None:
+		clear_then_init(args)
 		return
 	banned_lst = get_banned_lst(args)
 	banned_set = set(banned_lst)
