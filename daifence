@@ -261,7 +261,7 @@ def unban(args, banned_lst, unban_num):
 		print('dryrun-unban', unban_num, 'IPs :', ', '.join(banned_lst[-unban_num:]))
 	else:
 		syslog.syslog('unban %d IPs: %s' % (unban_num, ', '.join(banned_lst[-unban_num:])))
-		for ip in banned_lst[-unban_num:]:
+		for ip in banned_lst[:unban_num]:
 			setname = 'daifence4' if '.' in ip else 'daifence6'
 			subprocess.check_call(['ipset', 'del', setname, ip])
 
