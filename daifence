@@ -260,11 +260,9 @@ def unban(args, banned_lst, unban_num):
 	if args.dry_run:
 		print('dryrun-unban', unban_num, 'IPs :', ', '.join(banned_lst[-unban_num:]))
 	else:
-		unban_idx = random.sample(range(len(banned_lst)), unban_num)
-		unban_idx.sort(reverse=True)
-		syslog.syslog('unban %d IPs: %s' % (unban_num, ', '.join([banned_lst[idx] for idx in unban_idx])))
-		for idx in unban_idx:
-			ip = banned_lst[idx]
+		unban_lst = random.sample(banned_lst, unban_num)
+		syslog.syslog('unban %d IPs: %s' % (unban_num, ', '.join(unban_lst)))
+		for ip in unban_lst:
 			setname = 'daifence4' if '.' in ip else 'daifence6'
 			subprocess.check_call(['ipset', 'del', setname, ip])
 
