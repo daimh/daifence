@@ -260,7 +260,7 @@ def unban(args, banned_lst, unban_num):
 	if args.dry_run:
 		print('dryrun-unban', unban_num, 'IPs :', ', '.join(banned_lst[-unban_num:]))
 	else:
-		unban_idx = random.sample(range(len(banned_lst)), 3)
+		unban_idx = random.sample(range(len(banned_lst)), unban_num)
 		unban_idx.sort(reverse=True)
 		syslog.syslog('unban %d IPs: %s' % (unban_num, ', '.join([banned_lst[idx] for idx in unban_idx])))
 		for idx in unban_idx:
