@@ -14,7 +14,7 @@
 #20171020 logger
 #20170829
 #20170823
-import sys, datetime, os, argparse, subprocess, socket, json, syslog
+import sys, datetime, os, argparse, subprocess, socket, json, syslog, random
 
 #one time setting on CentOS 6
 #1, RSYSLOG_FileFormat in /etc/rsyslog.conf
@@ -260,8 +260,11 @@ def unban(args, banned_lst, unban_num):
 	if args.dry_run:
 		print('dryrun-unban', unban_num, 'IPs :', ', '.join(banned_lst[-unban_num:]))
 	else:
-		syslog.syslog('unban %d IPs: %s' % (unban_num, ', '.join(banned_lst[-unban_num:])))
-		for ip in banned_lst[:unban_num]:
+		unban_idx = random.sample(range(len(banned_lst)), 3)
+		unban_idx.sort(reverse=True)
+		syslog.syslog('unban %d IPs: %s' % (unban_num, ', '.join([banned_lst[idx] for idx in unban_idx])))
+		for idx in unban_idx:
+			ip = banned_lst[idx]
 			setname = 'daifence4' if '.' in ip else 'daifence6'
 			subprocess.check_call(['ipset', 'del', setname, ip])
 
