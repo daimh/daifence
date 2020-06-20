@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#20200620 parallel ssh
 #20200605 invalid users check, to include 'root'
 #20200225 ipset
 #20200224 MAJOR merge features from different versions
@@ -14,7 +15,7 @@
 #20171020 logger
 #20170829
 #20170823
-import sys, datetime, os, argparse, subprocess, socket, json, syslog, random
+import sys, datetime, os, argparse, subprocess, socket, json, syslog, random, concurrent.futures
 
 #one time setting on CentOS 6
 #1, RSYSLOG_FileFormat in /etc/rsyslog.conf
@@ -212,17 +213,37 @@ def ban_syn_ips(args, banned, whitelist, printlist):
 			if eval(scr):
 				ban_it(banned, args, printlist, ip, '%s,%s' % (scr, L))
 				break
+
+def get_futures(args_host_and_fails, cmd):
+	future_to_fails = {}
+	with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+		for host_and_fails in args_host_and_fails:
+			host, fails = host_and_fails.split(':')
+			fails = int(fails)
+			future_to_fails[executor.submit(subprocess.check_output, ['ssh', '-oLogLevel=error', host, cmd])] = (host, fails)
+	return future_to_fails 
+	
 def ban_ssh_ips(args, banned, whitelist, printlist):
 	if args.ssh is None: return
 	if args.ssh_invalid_users_file: 
 		invalid_users = set([ln[:-1] for ln in open(args.ssh_invalid_users_file)])
 	else:
 		invalid_users = set()
-	for host_and_fails in args.ssh:
+	future_to_fails = get_futures(args.ssh, "journalctl -u sshd -S '-%d seconds'" % args.window)
+#	with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+#		future_to_fails = {}
+#		for host_and_fails in args.ssh:
+#			host, fails = host_and_fails.split(':')
+#			fails = int(fails)
+#			future_to_fails[executor.submit(subprocess.check_output, ['ssh', '-oLogLevel=error', host, "journalctl -u sshd -S '-%d seconds'" % args.window])] = (host, fails)
+	for future in concurrent.futures.as_completed(future_to_fails):
+		host, fails = future_to_fails[future]
+		try:
+			buf = future.result().decode('utf-8')
+		except Exception as ex:
+			print('ssh %s:%d:%s' % (host, fails, str(ex)), file=sys.stderr)
+			continue
 		ips = {}
-		host, fails = host_and_fails.split(':')
-		fails = int(fails)
-		buf = subprocess.check_output(['ssh', '-oLogLevel=error', host, "journalctl -u sshd -S '-%d seconds'" % args.window]).decode('utf-8')
 		for ln in buf.split('\n'):
 			if ln.find(']: Failed password for ') == -1: continue
 			ip = ln[ln.rfind(' from ') + 6: ln.rfind(' port ')]
@@ -237,11 +258,15 @@ def ban_ssh_ips(args, banned, whitelist, printlist):
 			ban_it(banned, args, printlist, ip, 'SSH:%d,%s' % (times, host_and_fails))
 def ban_smb_ips(args, banned, whitelist, printlist):
 	if args.smb is None: return
-	for host_and_fails in args.smb:
+	future_to_fails = get_futures(args.ssh, "journalctl -u smb -S '-%d seconds'" % args.window)
+	for future in concurrent.futures.as_completed(future_to_fails):
+		host, fails = future_to_fails[future]
+		try:
+			buf = future.result().decode('utf-8')
+		except Exception as ex:
+			print('smb %s:%d:%s' % (host, fails, str(ex)), file=sys.stderr)
+			continue
 		ips = {}
-		host, fails = host_and_fails.split(':')
-		fails = int(fails)
-		buf = subprocess.check_output(['ssh', '-oLogLevel=error', host, "journalctl -u smb -S '-%d seconds'" % args.window]).decode('utf-8')
 		for ln in buf.split('\n'):
 			idx = ln.find('JSON Authentication:')
 			if idx == -1: continue
