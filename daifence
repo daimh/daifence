@@ -255,7 +255,7 @@ def ban_ssh_ips(args, banned, whitelist, printlist):
 			ips[ip] = ips.get(ip, 0) + 1
 		for ip, times in ips.items():
 			if times < fails: continue
-			ban_it(banned, args, printlist, ip, 'SSH:%d,%s' % (times, host_and_fails))
+			ban_it(banned, args, printlist, ip, 'SSH:%d,%s:%d' % (times, host, fails))
 def ban_smb_ips(args, banned, whitelist, printlist):
 	if args.smb is None: return
 	future_to_fails = get_futures(args.ssh, "journalctl -u smb -S '-%d seconds'" % args.window)
@@ -279,7 +279,7 @@ def ban_smb_ips(args, banned, whitelist, printlist):
 			ips[ip] = ips.get(ip, 0) + 1
 		for ip, times in ips.items():
 			if times < fails: continue
-			ban_it(banned, args, printlist, ip, '%d,%s' % (times, host_and_fails))
+			ban_it(banned, args, printlist, ip, '%d,%s:%d' % (times, host, fails))
 def unban(args, banned_lst, unban_num):
 	if unban_num <= 0: return
 	if args.dry_run:
