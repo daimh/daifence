@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#20200625 smb
 #20200620 parallel ssh
 #20200605 invalid users check, to include 'root'
 #20200225 ipset
@@ -258,7 +259,7 @@ def ban_ssh_ips(args, banned, whitelist, printlist):
 			ban_it(banned, args, printlist, ip, 'SSH:%d,%s:%d' % (times, host, fails))
 def ban_smb_ips(args, banned, whitelist, printlist):
 	if args.smb is None: return
-	future_to_fails = get_futures(args.ssh, "journalctl -u smb -S '-%d seconds'" % args.window)
+	future_to_fails = get_futures(args.smb, "journalctl -u smb -S '-%d seconds'" % args.window)
 	for future in concurrent.futures.as_completed(future_to_fails):
 		host, fails = future_to_fails[future]
 		try:
@@ -268,9 +269,9 @@ def ban_smb_ips(args, banned, whitelist, printlist):
 			continue
 		ips = {}
 		for ln in buf.split('\n'):
-			idx = ln.find('JSON Authentication:')
+			idx = ln.find('"Authentication":')
 			if idx == -1: continue
-			js = json.loads(ln[idx+21:])
+			js = json.loads(ln[ln.index(']: ')+3:])
 			if js['Authentication']['status'] not in [ 'NT_STATUS_WRONG_PASSWORD', 'NT_STATUS_NO_SUCH_USER']: continue
 			ip = js['Authentication']['remoteAddress']
 			if not ip.startswith('ipv4:'): raise Exception('ERR-200')
