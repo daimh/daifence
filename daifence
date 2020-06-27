@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#20200627 smb
 #20200625 smb
 #20200620 parallel ssh
 #20200605 invalid users check, to include 'root'
@@ -212,7 +213,7 @@ def ban_syn_ips(args, banned, whitelist, printlist):
 	for ip, L in history.items():
 		for scr in rules:
 			if eval(scr):
-				ban_it(banned, args, printlist, ip, '%s,%s' % (scr, L))
+				ban_it(banned, args, printlist, ip, 'syn,%s,%s' % (scr, L))
 				break
 
 def get_futures(args_host_and_fails, cmd):
@@ -251,12 +252,12 @@ def ban_ssh_ips(args, banned, whitelist, printlist):
 			if ip in banned or in_networks(ip, whitelist): continue
 			user = ln[ln.find(' for ') + 5: ln.rfind(' from ')]
 			if user in invalid_users:
-				ban_it(banned, args, printlist, ip, 'INVALID-USER:%s' % user)
+				ban_it(banned, args, printlist, ip, 'ssh,%s' % user)
 				continue
 			ips[ip] = ips.get(ip, 0) + 1
 		for ip, times in ips.items():
 			if times < fails: continue
-			ban_it(banned, args, printlist, ip, 'SSH:%d,%s:%d' % (times, host, fails))
+			ban_it(banned, args, printlist, ip, 'ssh,%d,%s:%d' % (times, host, fails))
 def ban_smb_ips(args, banned, whitelist, printlist):
 	if args.smb is None: return
 	future_to_fails = get_futures(args.smb, "journalctl -u smb -S '-%d seconds'" % args.window)
@@ -272,7 +273,8 @@ def ban_smb_ips(args, banned, whitelist, printlist):
 			idx = ln.find('"Authentication":')
 			if idx == -1: continue
 			js = json.loads(ln[ln.index(']: ')+3:])
-			if js['Authentication']['status'] not in [ 'NT_STATUS_WRONG_PASSWORD', 'NT_STATUS_NO_SUCH_USER']: continue
+#			if js['Authentication']['status'] not in [ 'NT_STATUS_WRONG_PASSWORD', 'NT_STATUS_NO_SUCH_USER']: continue
+			if js['Authentication']['status'] not in [ 'NT_STATUS_WRONG_PASSWORD']: continue
 			ip = js['Authentication']['remoteAddress']
 			if not ip.startswith('ipv4:'): raise Exception('ERR-200')
 			ip = ip.split(':')[1]
@@ -280,7 +282,7 @@ def ban_smb_ips(args, banned, whitelist, printlist):
 			ips[ip] = ips.get(ip, 0) + 1
 		for ip, times in ips.items():
 			if times < fails: continue
-			ban_it(banned, args, printlist, ip, '%d,%s:%d' % (times, host, fails))
+			ban_it(banned, args, printlist, ip, 'smb,%d,%s:%d' % (times, host, fails))
 def unban(args, banned_lst, unban_num):
 	if unban_num <= 0: return
 	if args.dry_run:
