@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#20200714 ip in banned
 #20200627 smb
 #20200625 smb
 #20200620 parallel ssh
@@ -157,6 +158,7 @@ def get_logs(args):
 			logs.append(ln[28:])
 	return logs
 def ban_it(banned, args, printlist, ip, reason):
+	if ip in banned: return
 	if args.ipv == '4':
 		if ip2int(ip)[0] != socket.AF_INET: return
 	elif args.ipv == '6':
