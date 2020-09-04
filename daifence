@@ -11,8 +11,8 @@
 #20190123 fixed -m 
 #20190121 smb and major code refactoring
 #20190119 sshd
-#20171217 journactl -k, "/var/log/message needs modification"
-#20171217 journactl -k, "/var/log/message needs modification"
+#20171217 journalctl -k, "/var/log/message needs modification"
+#20171217 journalctl -k, "/var/log/message needs modification"
 #20171120 network mask in white list file, printnet, etc
 #20171113 change port to int, and screening-rule-file
 #20171020 logger
@@ -156,6 +156,8 @@ def get_logs(args):
 			if diff.days * 3600 * 24 + diff.seconds > args.window: break
 			if 'kernel: daifence:' not in ln: continue
 			logs.append(ln[28:])
+	if len(logs) == 0:
+		print('No iptables log found, did you run "daifence --init"?', file=sys.stderr)
 	return logs
 def ban_it(banned, args, printlist, ip, reason):
 	if ip in banned: return
