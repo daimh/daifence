@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#20201012 host in ssh ban message
 #20200714 ip in banned
 #20200627 smb
 #20200625 smb
@@ -256,12 +257,12 @@ def ban_ssh_ips(args, banned, whitelist, printlist):
 			if ip in banned or in_networks(ip, whitelist): continue
 			user = ln[ln.find(' for ') + 5: ln.rfind(' from ')]
 			if user in invalid_users:
-				ban_it(banned, args, printlist, ip, 'ssh,%s' % user)
+				ban_it(banned, args, printlist, ip, 'ssh,%s,@%s' % (user, host))
 				continue
 			ips[ip] = ips.get(ip, 0) + 1
 		for ip, times in ips.items():
 			if times < fails: continue
-			ban_it(banned, args, printlist, ip, 'ssh,%d,%s:%d' % (times, host, fails))
+			ban_it(banned, args, printlist, ip, 'ssh,%d,@%s:%d' % (times, host, fails))
 def ban_smb_ips(args, banned, whitelist, printlist):
 	if args.smb is None: return
 	future_to_fails = get_futures(args.smb, "journalctl -u smb -S '-%d seconds'" % args.window)
@@ -286,7 +287,7 @@ def ban_smb_ips(args, banned, whitelist, printlist):
 			ips[ip] = ips.get(ip, 0) + 1
 		for ip, times in ips.items():
 			if times < fails: continue
-			ban_it(banned, args, printlist, ip, 'smb,%d,%s:%d' % (times, host, fails))
+			ban_it(banned, args, printlist, ip, 'smb,%d,@%s:%d' % (times, host, fails))
 def unban(args, banned_lst, unban_num):
 	if unban_num <= 0: return
 	if args.dry_run:
