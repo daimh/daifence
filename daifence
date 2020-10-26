@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#20201026 if ssh-invalid-user is not specified, ban all IP that tried ssh with invalid user
 #20201012 host in ssh ban message
 #20200714 ip in banned
 #20200627 smb
@@ -235,7 +236,7 @@ def ban_ssh_ips(args, banned, whitelist, printlist):
 	if args.ssh_invalid_users_file: 
 		invalid_users = set([ln[:-1] for ln in open(args.ssh_invalid_users_file)])
 	else:
-		invalid_users = set()
+		invalid_users = None
 	future_to_fails = get_futures(args.ssh, "journalctl -u sshd -S '-%d seconds'" % args.window)
 #	with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
 #		future_to_fails = {}
@@ -256,7 +257,7 @@ def ban_ssh_ips(args, banned, whitelist, printlist):
 			ip = ln[ln.rfind(' from ') + 6: ln.rfind(' port ')]
 			if ip in banned or in_networks(ip, whitelist): continue
 			user = ln[ln.find(' for ') + 5: ln.rfind(' from ')]
-			if user in invalid_users:
+			if invalid_users is None or user in invalid_users:
 				ban_it(banned, args, printlist, ip, 'ssh,%s,@%s' % (user, host))
 				continue
 			ips[ip] = ips.get(ip, 0) + 1
