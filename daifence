@@ -1,55 +1,117 @@
 #!/usr/bin/env python3
-#20201026 if ssh-invalid-user is not specified, ban all IP that tried ssh with invalid user
-#20201012 host in ssh ban message
-#20200714 ip in banned
-#20200627 smb
-#20200625 smb
-#20200620 parallel ssh
-#20200605 invalid users check, to include 'root'
-#20200225 ipset
-#20200224 MAJOR merge features from different versions
-#20190808 ssh_invalid_users
-#20190521 MAJOR, --init, -v 4/6, v6 is not throughtly tested yet
-#20190123 fixed -m 
-#20190121 smb and major code refactoring
-#20190119 sshd
-#20171217 journalctl -k, "/var/log/message needs modification"
-#20171217 journalctl -k, "/var/log/message needs modification"
-#20171120 network mask in white list file, printnet, etc
-#20171113 change port to int, and screening-rule-file
-#20171020 logger
-#20170829
-#20170823
-import sys, datetime, os, argparse, subprocess, socket, json, syslog, random, concurrent.futures
+# 20201026 if ssh-invalid-user is not specified, ban all IP that tried ssh with
+# 	invalid user
+# 20201012 host in ssh ban message
+# 20200714 ip in banned
+# 20200627 smb
+# 20200625 smb
+# 20200620 parallel ssh
+# 20200605 invalid users check, to include 'root'
+# 20200225 ipset
+# 20200224 MAJOR merge features from different versions
+# 20190808 ssh_invalid_users
+# 20190521 MAJOR, --init, -v 4/6, v6 is not throughtly tested yet
+# 20190123 fixed -m
+# 20190121 smb and major code refactoring
+# 20190119 sshd
+# 20171217 journalctl -k, "/var/log/message needs modification"
+# 20171217 journalctl -k, "/var/log/message needs modification"
+# 20171120 network mask in white list file, printnet, etc
+# 20171113 change port to int, and screening-rule-file
+# 20171020 logger
+# 20170829
+# 20170823
+import argparse
+import concurrent.futures
+import datetime
+import json
+import os
+import random
+import socket
+import subprocess
+import sys
+import syslog
 
-#one time setting on CentOS 6
-#1, RSYSLOG_FileFormat in /etc/rsyslog.conf
+# one time setting on CentOS 6
+# 1, RSYSLOG_FileFormat in /etc/rsyslog.conf
 
 _syn_list = ['DST', 'DPT']
 _synfield2int = set(['DPT'])
+
+
 def get_args():
 	parser = argparse.ArgumentParser()
-	parser.add_argument("-n", "--dry-run", help="dry run", action="store_true")
-	parser.add_argument("-f", "--whitelist-file", help="a list of whitelist IPs/networkss")
-	parser.add_argument("-w", "--window", help="detection window in seconds ", type=int, default=60)
-	parser.add_argument("-m", "--maximum-ip-addresses", help="maximum number of banned ip addresses", type=int)
-	parser.add_argument("-p", "--printnet-file", help="print banned IP that belongs to the networks in this file, or print all if not specified")
-	parser.add_argument("--var-log-messages", help="read syn logs from /var/log/messages instead of systemd journal, intended for pre-systemd Linux", action="store_true")
-	parser.add_argument("--rule", nargs='+', help="a rule of syn screening")
-	parser.add_argument("--rule-file", help="a file that has multiple syn screening rules")
-	parser.add_argument("--ssh", help="<host name>:<maximum occurences of 'Failed password'>\n\n<host name>:<maximum occurences of 'Failed password'>", action="append")
-	parser.add_argument("--ssh-invalid-users-file", help="a list of invalid ssh user names that will trigger an immediate ban")
-	parser.add_argument("--smb", help="<host name>:<maximum occurences of 'NT_STATUS_WRONG_PASSWORD'>", action="append")
-	parser.add_argument("--init", help="initialize the network interface", metavar="INTERFACE")
-	parser.add_argument("--clear", help="clear daifence on the network interface", metavar="INTERFACE")
-	parser.add_argument("--ipv", help="4/6/46, work on IPv4/IPv6 or both, default is both", default='46')
+	parser.add_argument(
+		"-n",
+		"--dry-run",
+		help="dry run",
+		action="store_true")
+	parser.add_argument(
+		"-f",
+		"--whitelist-file",
+		help="a list of whitelist IPs/networkss")
+	parser.add_argument(
+		"-w",
+		"--window",
+		help="detection window in seconds ",
+		type=int,
+		default=60)
+	parser.add_argument(
+		"-m",
+		"--maximum-ip-addresses",
+		help="maximum number of banned ip addresses",
+		type=int)
+	parser.add_argument(
+		"-p",
+		"--printnet-file",
+		help="print banned IP that belongs to the networks in this file"
+		", or all if not specified")
+	parser.add_argument(
+		"--var-log-messages",
+		help="read syn logs from /var/log/messages instead of systemd journal"
+		", intended for pre-systemd Linux",
+		action="store_true")
+	parser.add_argument(
+		"--rule",
+		nargs='+',
+		help="a rule of syn screening")
+	parser.add_argument(
+		"--rule-file",
+		help="a file that has multiple syn screening rules")
+	parser.add_argument(
+		"--ssh",
+		help="<host name>:<maximum occurences of 'Failed password'>"
+		"\n\n<host name>:<maximum occurences of 'Failed password'>",
+		action="append")
+	parser.add_argument(
+		"--ssh-invalid-users-file",
+		help="a list of invalid ssh user names that will trigger an immediate ban")
+	parser.add_argument(
+		"--smb",
+		help="<host name>:<maximum occurences of 'NT_STATUS_WRONG_PASSWORD'>",
+		action="append")
+	parser.add_argument(
+		"--init",
+		help="initialize the network interface",
+		metavar="INTERFACE")
+	parser.add_argument(
+		"--clear",
+		help="clear daifence on the network interface",
+		metavar="INTERFACE")
+	parser.add_argument(
+		"--ipv",
+		help="4/6/46, work on IPv4/IPv6 or both, default is both",
+		default='46')
 	return parser.parse_args()
+
+
 def readlines_reverse(filename):
 	with open(filename) as qfile:
 		qfile.seek(0, os.SEEK_END)
 		position = qfile.tell() - 1
 		qfile.seek(position)
-		if qfile.read(1) == '\n': position -= 1
+		if qfile.read(1) == '\n':
+			position -= 1
 		line = []
 		while position >= 0:
 			qfile.seek(position)
@@ -61,12 +123,15 @@ def readlines_reverse(filename):
 				line.append(next_char)
 			position -= 1
 		yield ''.join(line[::-1])
+
+
 def readlines_journal():
 	with open(filename) as qfile:
 		qfile.seek(0, os.SEEK_END)
 		position = qfile.tell() - 1
 		qfile.seek(position)
-		if qfile.read(1) == '\n': position -= 1
+		if qfile.read(1) == '\n':
+			position -= 1
 		line = []
 		while position >= 0:
 			qfile.seek(position)
@@ -78,15 +143,24 @@ def readlines_journal():
 				line.append(next_char)
 			position -= 1
 		yield ''.join(line[::-1])
+
+
 def get_banned_lst_setname(banned_lst, setname):
-	for ln in subprocess.check_output(['ipset', 'list', setname]).decode('utf-8').split('\n'):
+	for ln in subprocess.check_output(
+		['ipset', 'list', setname]).decode('utf-8').split('\n'):
 		if ': ' not in ln and 'Members:' not in ln and ln != '':
 			banned_lst.append(ln)
+
+
 def get_banned_lst(args):
 	banned_lst = []
-	if '4' in args.ipv: get_banned_lst_setname(banned_lst, 'daifence4')
-	if '6' in args.ipv: get_banned_lst_setname(banned_lst, 'daifence6')
+	if '4' in args.ipv:
+		get_banned_lst_setname(banned_lst, 'daifence4')
+	if '6' in args.ipv:
+		get_banned_lst_setname(banned_lst, 'daifence6')
 	return banned_lst
+
+
 def ip2int(sip):
 	if '.' in sip:
 		family = socket.AF_INET
@@ -96,55 +170,78 @@ def ip2int(sip):
 		bn = socket.inet_pton(family, sip)
 	except OSError:
 		raise Exception('ERR-701')
-	while bn[0] == 0: bn = bn[1:]
+	while bn[0] == 0:
+		bn = bn[1:]
 	ip = 0
-	for n in bn: ip = (ip << 8) + n
+	for n in bn:
+		ip = (ip << 8) + n
 	if family == socket.AF_INET:
-		for i in range(4-len(bn)): ip = ip << 8
+		for i in range(4-len(bn)):
+			ip = ip << 8
 	else:
-		for i in range(16-len(bn)): ip = ip << 8
+		for i in range(16-len(bn)):
+			ip = ip << 8
 	return family, ip
+
+
 def str2net(ln):
 	cut = ln.find('#')
-	if cut != -1: ln = ln[:cut]
+	if cut != -1:
+		ln = ln[:cut]
 	ln = ln.strip()
-	if ln == '': return
+	if ln == '':
+		return
 	fs = ln.split('/')
-	if len(fs) < 1 or len(fs) > 2: raise Exception('ERR-601')
+	if len(fs) < 1 or len(fs) > 2:
+		raise Exception('ERR-601')
 	ip = ip2int(fs[0])
 	if ip[0] == socket.AF_INET:
 		if len(fs) == 1:
 			mask = 32
 		else:
 			mask = int(fs[1])
-			if mask < 1 or mask > 32: raise Exception('ERR-602')
+			if mask < 1 or mask > 32:
+				raise Exception('ERR-602')
 		mask = (0xffffffff >> (32-mask)) << (32-mask)
 	else:
 		if len(fs) == 1:
 			mask = 128
 		else:
 			mask = int(fs[1])
-			if mask < 1 or mask > 128: raise Exception('ERR-603')
+			if mask < 1 or mask > 128:
+				raise Exception('ERR-603')
 		mask = (0xffffffffffffffffffffffffffffffff >> (128-mask)) << (128-mask)
 	ip = (ip[0], ip[1] & mask)
 	return (ip, mask)
+
+
 def get_networks(filename):
-	if filename is None: raise Exception('ERR-005')
+	if filename is None:
+		raise Exception('ERR-005')
 	networks = [str2net(ln) for ln in open(filename)]
 	networks = [net for net in networks if net is not None]
 	return list(set(networks))
+
+
 def in_networks(sip, networks):
-	if networks is None: raise Exception('ERR-006')
+	if networks is None:
+		raise Exception('ERR-006')
 	chk_ip = ip2int(sip)
 	for net_ip, net_mask in networks:
-		if chk_ip[0] == net_ip[0] and (chk_ip[1] & net_mask) == net_ip[1]: return True
+		if chk_ip[0] == net_ip[0] and (chk_ip[1] & net_mask) == net_ip[1]:
+			return True
 	return False
+
+
 def get_logs(args):
 	logs = []
 	if not args.var_log_messages:
-		for ln in subprocess.check_output(['journalctl', '-k', '-S', '-%d seconds' % args.window]).decode('utf-8').split('\n'):
+		for ln in subprocess.check_output(
+			['journalctl', '-k', '-S', '-%d seconds' % args.window]
+		).decode('utf-8').split('\n'):
 			idx = ln.find('kernel: daifence:')
-			if idx == -1: continue
+			if idx == -1:
+				continue
 			logs.append(ln[idx+17:])
 	else:
 		now = datetime.datetime.now()
@@ -153,26 +250,37 @@ def get_logs(args):
 			try:
 				ts = datetime.datetime.strptime(ln[:19], '%Y-%m-%dT%H:%M:%S')
 			except ValueError:
-				ts = datetime.datetime.strptime('%d %s' % (now.year, ln[:15]), '%Y %b %d %H:%M:%S')
+				ts = datetime.datetime.strptime(
+					'%d %s' % (now.year, ln[:15]), '%Y %b %d %H:%M:%S')
 			diff = now-ts
-			if diff.days * 3600 * 24 + diff.seconds > args.window: break
-			if 'kernel: daifence:' not in ln: continue
+			if diff.days * 3600 * 24 + diff.seconds > args.window:
+				break
+			if 'kernel: daifence:' not in ln:
+				continue
 			logs.append(ln[28:])
 	if len(logs) == 0:
-		print('No iptables log found, did you run "daifence --init"?', file=sys.stderr)
+		print(
+			'No iptables log found, did you run "daifence --init"?', file=sys.stderr)
 	return logs
+
+
 def ban_it(banned, args, printlist, ip, reason):
-	if ip in banned: return
+	if ip in banned:
+		return
 	if args.ipv == '4':
-		if ip2int(ip)[0] != socket.AF_INET: return
+		if ip2int(ip)[0] != socket.AF_INET:
+			return
 	elif args.ipv == '6':
-		if ip2int(ip)[0] != socket.AF_INET6: return
-	if printlist is None or in_networks(ip, printlist): print(ip, reason, sep='\t')
+		if ip2int(ip)[0] != socket.AF_INET6:
+			return
+	if printlist is None or in_networks(ip, printlist):
+		print(ip, reason, sep='\t')
 	setname = 'daifence4' if '.' in ip else 'daifence6'
 	if not args.dry_run:
 		subprocess.check_call(['ipset', 'add', setname, ip])
 		syslog.syslog('ban: %s, %s' % (ip, reason))
 		banned.add(ip)
+
 
 def get_rules(args):
 	if args.rule is None:
@@ -182,14 +290,17 @@ def get_rules(args):
 	if args.rule_file is not None:
 		for ln in open(args.rule_file):
 			idx = ln.find('#')
-			if idx != -1: ln = ln[:idx]
+			if idx != -1:
+				ln = ln[:idx]
 			ln = ln.strip()
-			if ln == '': continue
+			if ln == '':
+				continue
 			rules.append(ln)
 	return list(set(rules))
 
+
 def get_syn_history(args, banned, whitelist):
-	history = {} #{ SRC : [ (DST, DPT), ]
+	history = {}  # { SRC : [ (DST, DPT), ]
 	now = datetime.datetime.now()
 	for ln in get_logs(args):
 		ip, props = None, {}
@@ -199,18 +310,25 @@ def get_syn_history(args, banned, whitelist):
 				key, value = item, True
 			else:
 				key, value = item[:idx], item[idx+1:]
-			if key == 'SRC': ip = value
-			if key not in _syn_list: continue
-			if key in props: raise Exception('ERR-100')
+			if key == 'SRC':
+				ip = value
+			if key not in _syn_list:
+				continue
+			if key in props:
+				raise Exception('ERR-100')
 			if key in _synfield2int:
 				props[key] = int(value)
 			else:
 				props[key] = value
-		if ip is None: raise Exception('ERR-101')
-		if ip in banned or in_networks(ip, whitelist): continue
+		if ip is None:
+			raise Exception('ERR-101')
+		if ip in banned or in_networks(ip, whitelist):
+			continue
 		props = tuple([props[key] for key in _syn_list])
 		history.setdefault(ip, []).append(props)
 	return history
+
+
 def ban_syn_ips(args, banned, whitelist, printlist):
 	rules = get_rules(args)
 	history = get_syn_history(args, banned, whitelist)
@@ -222,28 +340,29 @@ def ban_syn_ips(args, banned, whitelist, printlist):
 				ban_it(banned, args, printlist, ip, 'syn,%s,%s' % (scr, L))
 				break
 
+
 def get_futures(args_host_and_fails, cmd):
 	future_to_fails = {}
 	with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
 		for host_and_fails in args_host_and_fails:
 			host, fails = host_and_fails.split(':')
 			fails = int(fails)
-			future_to_fails[executor.submit(subprocess.check_output, ['ssh', '-oLogLevel=error', host, cmd])] = (host, fails)
-	return future_to_fails 
-	
+			future_to_fails[
+				executor.submit(
+					subprocess.check_output, ['ssh', '-oLogLevel=error', host, cmd])
+			] = (host, fails)
+	return future_to_fails
+
+
 def ban_ssh_ips(args, banned, whitelist, printlist):
-	if args.ssh is None: return
-	if args.ssh_invalid_users_file: 
+	if args.ssh is None:
+		return
+	if args.ssh_invalid_users_file:
 		invalid_users = set([ln[:-1] for ln in open(args.ssh_invalid_users_file)])
 	else:
 		invalid_users = None
-	future_to_fails = get_futures(args.ssh, "journalctl -u sshd -S '-%d seconds'" % args.window)
-#	with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
-#		future_to_fails = {}
-#		for host_and_fails in args.ssh:
-#			host, fails = host_and_fails.split(':')
-#			fails = int(fails)
-#			future_to_fails[executor.submit(subprocess.check_output, ['ssh', '-oLogLevel=error', host, "journalctl -u sshd -S '-%d seconds'" % args.window])] = (host, fails)
+	future_to_fails = get_futures(
+		args.ssh, "journalctl -u sshd -S '-%d seconds'" % args.window)
 	for future in concurrent.futures.as_completed(future_to_fails):
 		host, fails = future_to_fails[future]
 		try:
@@ -253,20 +372,28 @@ def ban_ssh_ips(args, banned, whitelist, printlist):
 			continue
 		ips = {}
 		for ln in buf.split('\n'):
-			if ln.find(']: Failed password for ') == -1: continue
+			if ln.find(']: Failed password for ') == -1:
+				continue
 			ip = ln[ln.rfind(' from ') + 6: ln.rfind(' port ')]
-			if ip in banned or in_networks(ip, whitelist): continue
+			if ip in banned or in_networks(ip, whitelist):
+				continue
 			user = ln[ln.find(' for ') + 5: ln.rfind(' from ')]
 			if invalid_users is None or user in invalid_users:
 				ban_it(banned, args, printlist, ip, 'ssh,%s,@%s' % (user, host))
 				continue
 			ips[ip] = ips.get(ip, 0) + 1
 		for ip, times in ips.items():
-			if times < fails: continue
+			if times < fails:
+				continue
 			ban_it(banned, args, printlist, ip, 'ssh,%d,@%s:%d' % (times, host, fails))
+
+
 def ban_smb_ips(args, banned, whitelist, printlist):
-	if args.smb is None: return
-	future_to_fails = get_futures(args.smb, "journalctl -u smb -S '-%d seconds'" % args.window)
+	if args.smb is None:
+		return
+	future_to_fails = get_futures(
+		args.smb,
+		"journalctl -u smb -S '-%d seconds'" % args.window)
 	for future in concurrent.futures.as_completed(future_to_fails):
 		host, fails = future_to_fails[future]
 		try:
@@ -277,20 +404,27 @@ def ban_smb_ips(args, banned, whitelist, printlist):
 		ips = {}
 		for ln in buf.split('\n'):
 			idx = ln.find('"Authentication":')
-			if idx == -1: continue
+			if idx == -1:
+				continue
 			js = json.loads(ln[ln.index(']: ')+3:])
-#			if js['Authentication']['status'] not in [ 'NT_STATUS_WRONG_PASSWORD', 'NT_STATUS_NO_SUCH_USER']: continue
-			if js['Authentication']['status'] not in [ 'NT_STATUS_WRONG_PASSWORD']: continue
+			if js['Authentication']['status'] not in ['NT_STATUS_WRONG_PASSWORD']:
+				continue
 			ip = js['Authentication']['remoteAddress']
-			if not ip.startswith('ipv4:'): raise Exception('ERR-200')
+			if not ip.startswith('ipv4:'):
+				raise Exception('ERR-200')
 			ip = ip.split(':')[1]
-			if ip in banned or in_networks(ip, whitelist): continue
+			if ip in banned or in_networks(ip, whitelist):
+				continue
 			ips[ip] = ips.get(ip, 0) + 1
 		for ip, times in ips.items():
-			if times < fails: continue
+			if times < fails:
+				continue
 			ban_it(banned, args, printlist, ip, 'smb,%d,@%s:%d' % (times, host, fails))
+
+
 def unban(args, banned_lst, unban_num):
-	if unban_num <= 0: return
+	if unban_num <= 0:
+		return
 	if args.dry_run:
 		print('dryrun-unban', unban_num, 'IPs :', ', '.join(banned_lst[-unban_num:]))
 	else:
@@ -300,12 +434,13 @@ def unban(args, banned_lst, unban_num):
 			setname = 'daifence4' if '.' in ip else 'daifence6'
 			subprocess.check_call(['ipset', 'del', setname, ip])
 
+
 def clear_then_init_4or6(args, cmds, v4to6):
 	if args.dry_run:
 		print('#')
 	for cmd in reversed(cmds):
 		if cmd[0] == 'iptables':
-			cmd = [{'-I':'-D'}.get(s, s) for s in cmd]
+			cmd = [{'-I': '-D'}.get(s, s) for s in cmd]
 		else:
 			cmd = ['ipset', 'destroy', 'daifence4']
 		cmd = [v4to6.get(s, s) for s in cmd]
@@ -313,25 +448,40 @@ def clear_then_init_4or6(args, cmds, v4to6):
 			print(' '.join(cmd))
 		else:
 			subprocess.call(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-	if args.init is None: return
+	if args.init is None:
+		return
 	for cmd in cmds:
 		cmd = [v4to6.get(s, s) for s in cmd]
 		if args.dry_run:
 			print(' '.join(cmd))
 		elif subprocess.call(cmd) != 0:
-			raise Exception('ERR-300: COMMAND failed:\n\t' + ' '.join(cmd) )
+			raise Exception('ERR-300: COMMAND failed:\n\t' + ' '.join(cmd))
+
+
 def clear_then_init(args):
 	cmds = [
-		['iptables', '-t', 'nat', '-I', 'PREROUTING', '-i', args.clear, '-p', 'tcp', '-m', 'tcp', '--tcp-flags', 'FIN,SYN,RST,ACK', 'SYN', '-j', 'LOG', '--log-prefix', 'daifence:'],
+		['iptables', '-t', 'nat', '-I', 'PREROUTING', '-i', args.clear,
+			'-p', 'tcp', '-m', 'tcp', '--tcp-flags', 'FIN,SYN,RST,ACK', 'SYN',
+			'-j', 'LOG', '--log-prefix', 'daifence:'],
 		['ipset', 'create', 'daifence4', 'hash:ip', 'family', 'inet'],
-		['iptables', '-i', args.clear, '-I', 'INPUT', '-m', 'set', '--match-set', 'daifence4', 'src', '-j', 'DROP'],
-		['iptables', '-i', args.clear, '-I', 'FORWARD', '-m', 'set', '--match-set', 'daifence4', 'src', '-j', 'DROP'],
+		['iptables', '-i', args.clear, '-I', 'INPUT', '-m', 'set',
+			'--match-set', 'daifence4', 'src', '-j', 'DROP'],
+		['iptables', '-i', args.clear, '-I', 'FORWARD', '-m', 'set',
+			'--match-set', 'daifence4', 'src', '-j', 'DROP'],
 	]
-	if '4' in args.ipv: clear_then_init_4or6(args, cmds, {})
-	if '6' in args.ipv: clear_then_init_4or6(args, cmds, {'iptables':'ip6tables', 'daifence4':'daifence6', 'inet':'inet6'})
+	if '4' in args.ipv:
+		clear_then_init_4or6(args, cmds, {})
+	if '6' in args.ipv:
+		clear_then_init_4or6(args, cmds, {
+			'iptables': 'ip6tables',
+			'daifence4': 'daifence6',
+			'inet': 'inet6'})
+
+
 def main():
 	args = get_args()
-	if args.ipv not in ['4', '6', '46']: raise Exception('ERR-001')
+	if args.ipv not in ['4', '6', '46']:
+		raise Exception('ERR-001')
 	if args.init is not None:
 		args.clear = args.init
 	if args.clear is not None:
@@ -353,4 +503,6 @@ def main():
 	if args.maximum_ip_addresses is not None:
 		unban(args, banned_lst, len(banned_set) - args.maximum_ip_addresses)
 
-if __name__ == '__main__': main()
+
+if __name__ == '__main__':
+	main()
