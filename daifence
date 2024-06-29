@@ -49,7 +49,7 @@ def get_args():
 	parser.add_argument(
 		"-f",
 		"--whitelist-file",
-		help="a list of whitelist IPs/networkss")
+		help="a whitelist of IPs/networks")
 	parser.add_argument(
 		"-w",
 		"--window",
@@ -89,6 +89,10 @@ def get_args():
 	parser.add_argument(
 		"--smb",
 		help="<host name>:<maximum occurences of 'NT_STATUS_WRONG_PASSWORD'>",
+		action="append")
+	parser.add_argument(
+		"--blacklist",
+		help="<host name>, ban all IPs listed in Host:/tmp/daifence-blacklist",
 		action="append")
 	parser.add_argument(
 		"--init",
@@ -265,7 +269,7 @@ def get_logs(args):
 
 
 def ban_it(banned, args, printlist, ip, reason):
-	if ip in banned:
+	if ip in banned or ip == '':
 		return
 	if args.ipv == '4':
 		if ip2int(ip)[0] != socket.AF_INET:
@@ -341,30 +345,43 @@ def ban_syn_ips(args, banned, whitelist, printlist):
 				break
 
 
-def get_futures(args_host_and_fails, cmd):
-	future_to_fails = {}
+def get_futures(args_host_and_params, cmd):
+	futures = {}
 	with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
-		for host_and_fails in args_host_and_fails:
-			host, fails = host_and_fails.split(':')
-			fails = int(fails)
-			future_to_fails[
+		for host_and_params in args_host_and_params:
+			host_and_params = host_and_params.split(':')
+			host = host_and_params[0]
+			futures[
 				executor.submit(
 					subprocess.check_output, ['ssh', '-oLogLevel=error', host, cmd])
-			] = (host, fails)
-	return future_to_fails
+			] = host_and_params
+	return futures
+
+
+def ban_blacklist_ips(args, banned, whitelist, printlist):
+	if args.blacklist is None:
+		return
+	futures = get_futures(
+		args.blacklist, "cat /tmp/daifence-blacklist")
+	for future in concurrent.futures.as_completed(futures):
+		host = futures[future][0]
+		try:
+			buf = future.result().decode('utf-8')
+		except Exception as ex:
+			print(f'blacklist {ex}', file=sys.stderr)
+			continue
+		for ip in buf.split('\n'):
+			ban_it(banned, args, printlist, ip, f'blacklist,@{host}:{ip}')
 
 
 def ban_ssh_ips(args, banned, whitelist, printlist):
 	if args.ssh is None:
 		return
-	if args.ssh_invalid_users_file:
-		invalid_users = set([ln[:-1] for ln in open(args.ssh_invalid_users_file)])
-	else:
-		invalid_users = None
-	future_to_fails = get_futures(
-		args.ssh, "journalctl -u sshd -S '-%d seconds'" % args.window)
-	for future in concurrent.futures.as_completed(future_to_fails):
-		host, fails = future_to_fails[future]
+	futures = get_futures(
+		args.ssh, "cat /tmp/daifence-blacklist")
+	for future in concurrent.futures.as_completed(futures):
+		host_and_params = futures[future]
+		host, fail = host_and_params[0], int(host_and_params[1])
 		try:
 			buf = future.result().decode('utf-8')
 		except Exception as ex:
@@ -391,11 +408,12 @@ def ban_ssh_ips(args, banned, whitelist, printlist):
 def ban_smb_ips(args, banned, whitelist, printlist):
 	if args.smb is None:
 		return
-	future_to_fails = get_futures(
+	futures = get_futures(
 		args.smb,
 		"journalctl -u smb -S '-%d seconds'" % args.window)
-	for future in concurrent.futures.as_completed(future_to_fails):
-		host, fails = future_to_fails[future]
+	for future in concurrent.futures.as_completed(futures):
+		host_and_params = futures[future]
+		host, fails = host_and_params[0], int(host_and_params[1])
 		try:
 			buf = future.result().decode('utf-8')
 		except Exception as ex:
@@ -489,17 +507,16 @@ def main():
 		return
 	banned_lst = get_banned_lst(args)
 	banned_set = set(banned_lst)
-	if args.whitelist_file is None:
-		whitelist = []
-	else:
+	whitelist = []
+	if args.whitelist_file is not None:
 		whitelist = get_networks(args.whitelist_file)
-	if args.printnet_file is None:
-		printlist = None
-	else:
+	printlist = None
+	if args.printnet_file is not None:
 		printlist = get_networks(args.printnet_file)
 	ban_syn_ips(args, banned_set, whitelist, printlist)
 	ban_ssh_ips(args, banned_set, whitelist, printlist)
 	ban_smb_ips(args, banned_set, whitelist, printlist)
+	ban_blacklist_ips(args, banned_set, whitelist, printlist)
 	if args.maximum_ip_addresses is not None:
 		unban(args, banned_lst, len(banned_set) - args.maximum_ip_addresses)
 
